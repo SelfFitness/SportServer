@@ -1,4 +1,7 @@
-﻿namespace SportServer.Models
+﻿using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
+
+namespace SportServer.Models
 {
     public class ExercisePart
     {
@@ -9,5 +12,8 @@
         public TimeSpan? Duration { get; set; }
 
         public int? Count { get; set; }
+
+        [JsonIgnore]
+        public List<Plan> Plans { get; set; }
     }
 }

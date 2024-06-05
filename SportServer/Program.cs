@@ -1,26 +1,86 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using SportServer.Data;
+using SportServer.Helpers;
+using SportServer.Models;
+using System.Text.Json;
 
 namespace SportServer
 {
     public class Program
     {
-        public static void Main(string[] args)
+        public static async Task Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
 
             // Add services to the container.
-            var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            var connectionString = builder.Configuration["SPORT_CONNECTION"] ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+            var issuer = builder.Configuration["ISSUER"] ?? throw new InvalidOperationException("Issuer not found.");
+            var secretKey = builder.Configuration["SECRET_KEY"] ?? throw new InvalidOperationException("Secret key not found.");
+            var audience = builder.Configuration["AUDIENCE"] ?? throw new InvalidOperationException("Audience not found.");
+            var jwtOptions = new JwtOptions(secretKey, issuer, audience);
+            builder.Services.AddSingleton(options => jwtOptions);
+            builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidIssuer = jwtOptions.Issuer,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidAudience = jwtOptions.Audience,
+                    IssuerSigningKey = jwtOptions.SymmetricSecurityKey,
+                    ValidateIssuerSigningKey = true,
+                };
+            });
+
             builder.Services.AddDbContext<ApplicationDbContext>(options =>
-                options.UseSqlServer(connectionString));
+                options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
             builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
-            builder.Services.AddDefaultIdentity<IdentityUser>(options => options.SignIn.RequireConfirmedAccount = true)
+            builder.Services.AddDefaultIdentity<AppUser>(options =>
+            {
+                options.SignIn.RequireConfirmedAccount = false;
+                options.Password.RequireDigit = false;
+                options.Password.RequireLowercase = false;
+                options.Password.RequireUppercase = false;
+                options.Password.RequireNonAlphanumeric = false;
+                options.Password.RequiredLength = 2;
+            })
+                .AddRoles<IdentityRole>()
                 .AddEntityFrameworkStores<ApplicationDbContext>();
             builder.Services.AddControllersWithViews();
 
+            builder.Services.Configure<SecurityStampValidatorOptions>(options =>
+            {
+                // enables immediate logout, after updating the user's security stamp.
+                options.ValidationInterval = TimeSpan.Zero;
+            });
+            builder.Services.ConfigureApplicationCookie(options =>
+            {
+                options.Cookie.HttpOnly = true;
+                options.LoginPath = "/users/login";
+                options.AccessDeniedPath = "/";
+            });
             var app = builder.Build();
+
+            // Initialize data
+            using (var scope = app.Services.CreateScope())
+            {
+                var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+                var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+                var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                await db.Database.EnsureCreatedAsync();
+                var plangroups = await db.PlanGroups.Include(x => x.Plans).ThenInclude(x => x.ExerciseParts).ThenInclude(x => x.Exercise).ToListAsync();
+                db.PlanGroups.RemoveRange(plangroups);
+                var plans = await JsonSerializer.DeserializeAsync<IEnumerable<PlanGroup>>(File.OpenRead("plans.json"));
+                await db.PlanGroups.AddRangeAsync(plans);
+                await db.SaveChangesAsync();
+                await IdentityDataInitializer.SeedRoles(roleManager);
+                await IdentityDataInitializer.SeedUsers(userManager);
+            }
 
             // Configure the HTTP request pipeline.
             if (app.Environment.IsDevelopment())
@@ -29,7 +89,6 @@ namespace SportServer
             }
             else
             {
-                app.UseExceptionHandler("/Home/Error");
                 // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
                 app.UseHsts();
             }
@@ -39,12 +98,10 @@ namespace SportServer
 
             app.UseRouting();
 
+            app.UseAuthentication();
             app.UseAuthorization();
-
-            app.MapControllerRoute(
-                name: "default",
-                pattern: "{controller=Home}/{action=Index}/{id?}");
-            app.MapRazorPages();
+            
+            app.MapControllers();
 
             app.Run();
         }

@@ -1,4 +1,8 @@
-﻿namespace SportServer.Models
+﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
+
+namespace SportServer.Models
 {
     public class Plan
     {
@@ -12,6 +16,6 @@
 
         public int MaxDifficulty { get; set; }
 
-        public IList<ExercisePart> Exercises { get; set; }
+        public IList<ExercisePart> ExerciseParts { get; set; }
     }
 }
