@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using SportServer.Data;
 using SportServer.Models;
 using SportServer.Models.Viewmodels;
+using SportServer.Predictors;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 
@@ -28,17 +29,21 @@ namespace SportServer.Controllers
 
         private readonly ApplicationDbContext _appDbContext;
 
+        private readonly IServiceProvider _serviceProvider;
+
         public UserApiController(RoleManager<IdentityRole> roleManager,
             UserManager<AppUser> userManager,
             ApplicationDbContext context,
             JwtOptions jwtOptions,
-            ILogger<UserApiController> logger) 
+            ILogger<UserApiController> logger,
+            IServiceProvider serviceProvider) 
         {
             _appDbContext = context;
             _roleManager = roleManager;
             _userManager = userManager;
             _jwtOptions = jwtOptions;
             _logger = logger;
+            _serviceProvider = serviceProvider;
         }
 
         [AllowAnonymous]
@@ -74,6 +79,7 @@ namespace SportServer.Controllers
                     error = result.Errors.FirstOrDefault()
                 });
             }
+            await _appDbContext.SaveChangesAsync();
             var claims = await CreateClaims(appUser);
             var jwt = new JwtSecurityToken(
                 issuer: _jwtOptions.Issuer,
@@ -139,11 +145,47 @@ namespace SportServer.Controllers
             var user = await _userManager.FindByIdAsync(userId);
             if (user == null)
                 return Unauthorized();
-            var weigthHistory = await _appDbContext.WeigthHistory.Where(x => x.AppUser == user)
-                .OrderBy(x => x.Date)
+            var weigthHistory = await _appDbContext.WeigthHistory.Where(x => x.AppUser == user && x.Weigth.HasValue)
+                .OrderByDescending(x => x.Date)
                 .Take(10)
+                .Reverse()
                 .ToListAsync();
             return Ok(weigthHistory);
+        }
+
+        [HttpGet("predictweigth")]
+        public async Task<IActionResult> PredictNextWeigth()
+        {
+            var predictor = _serviceProvider.GetRequiredService<WeightPredictor>();
+            var userId = User.FindFirstValue("Id");
+            if (userId == null)
+                return Unauthorized();
+            var user = await _userManager.FindByIdAsync(userId);
+            var weigthHistory = await _appDbContext.WeigthHistory.Where(x => x.AppUser == user && x.Weigth.HasValue)
+                .OrderByDescending(x => x.Date)
+                .Take(10)
+                .Reverse()
+                .ToListAsync();
+            if (weigthHistory.Count < 6)
+                return Ok();
+            var weigthList = weigthHistory.Select(x => x.Weigth.Value).ToList();
+            var datesList = weigthHistory.Select(x => x.Date).ToList();
+            predictor.Train(weigthList, datesList);
+            var dateDelta = new List<TimeSpan>();
+            var lastEl = datesList.Count - 1 % 2 == 0 ? datesList.Count - 1 : datesList.Count - 2;
+            for (int i = 0; i < lastEl; i += 2)
+            {
+                var delta = datesList[i] > datesList[i + 1] ? datesList[i] - datesList[i + 1] : datesList[i + 1] - datesList[i];
+                dateDelta.Add(delta);
+            }
+            var avgDelta = dateDelta.Average(x => x.TotalSeconds);
+            var predictDate = datesList.Last().AddSeconds(avgDelta);
+            var predictWeigth = predictor.Predict(datesList.First(), predictDate);
+            return Ok(new WeigthHistory()
+            {
+                Date = predictDate,
+                Weigth = predictWeigth,
+            });
         }
 
         [HttpGet("check")]
@@ -203,6 +245,7 @@ namespace SportServer.Controllers
             var result = await _userManager.ChangePasswordAsync(user, changePasswordVm.OldPassword, changePasswordVm.NewPassword);
             if (!result.Succeeded)
                 return BadRequest(result.Errors.FirstOrDefault());
+            await _appDbContext.SaveChangesAsync();
             return Ok();
         }
 

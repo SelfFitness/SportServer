@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using SportServer.Data;
 using SportServer.Helpers;
 using SportServer.Models;
+using SportServer.Predictors;
 using System.Text.Json;
 
 namespace SportServer
@@ -22,6 +23,7 @@ namespace SportServer
             var audience = builder.Configuration["AUDIENCE"] ?? throw new InvalidOperationException("Audience not found.");
             var jwtOptions = new JwtOptions(secretKey, issuer, audience);
             builder.Services.AddSingleton(options => jwtOptions);
+            builder.Services.AddScoped<WeightPredictor>();
             builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
             {
                 options.TokenValidationParameters = new TokenValidationParameters
@@ -73,9 +75,31 @@ namespace SportServer
                 var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
                 var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                 await db.Database.EnsureCreatedAsync();
-                var plangroups = await db.PlanGroups.Include(x => x.Plans).ThenInclude(x => x.ExerciseParts).ThenInclude(x => x.Exercise).ToListAsync();
+                var plangroups = await db.PlanGroups
+                    .Include(x => x.Plans)
+                    .ThenInclude(x => x.ExerciseParts)
+                    .ThenInclude(x => x.Exercise)
+                    .ToListAsync();
                 db.PlanGroups.RemoveRange(plangroups);
+                var exercices = await db.ExerciseParts.Include(x => x.Plans)
+                    .Include(x => x.Exercise)
+                    .ToListAsync();
+                db.ExerciseParts.RemoveRange(exercices);
                 var plans = await JsonSerializer.DeserializeAsync<IEnumerable<PlanGroup>>(File.OpenRead("plans.json"));
+                var exs = plans.SelectMany(x => x.Plans.SelectMany(x => x.ExerciseParts)).GroupBy(x => x.Exercise.Title).Select(x => x.First()).ToList();
+                foreach (var plangroup in plans)
+                {
+                    foreach (var plan in plangroup.Plans)
+                    {
+                        var exParts = new List<ExercisePart>();
+                        foreach (var ex in plan.ExerciseParts)
+                        {
+                            var sExs = exs.First(x => x.Exercise.Title == ex.Exercise.Title);
+                            exParts.Add(sExs);
+                        }
+                        plan.ExerciseParts = exParts;
+                    }
+                }
                 await db.PlanGroups.AddRangeAsync(plans);
                 await db.SaveChangesAsync();
                 await IdentityDataInitializer.SeedRoles(roleManager);

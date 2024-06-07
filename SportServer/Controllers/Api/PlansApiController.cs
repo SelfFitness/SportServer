@@ -40,6 +40,13 @@ namespace SportServer.Controllers
             return Ok(plans);
         }
 
+        [HttpGet("exercices")]
+        public async Task<IActionResult> Exercices()
+        {
+            var exercices = await _context.ExerciseParts.Include(x => x.Exercise).ToListAsync();
+            return Ok(exercices);
+        }
+
         [HttpPost("savetrain/{planId}")]
         public async Task<IActionResult> SaveTrain(int planId)
         {
