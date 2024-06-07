@@ -209,7 +209,7 @@ namespace SportServer.Controllers
             var user = await _userManager.FindByIdAsync(userId);
             if (user == null)
                 return Unauthorized();
-            var bmi = Math.Round(user.Weigth / Math.Pow(user.Heigth / 100, 2), 2);
+            var bmi = user.Heigth <= 0 ? 0 : Math.Round(user.Weigth / Math.Pow(user.Heigth / 100, 2), 2);
             var stats = new UserStats()
             {
                 Bmi = bmi,
