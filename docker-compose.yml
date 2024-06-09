@@ -9,19 +9,21 @@ services:
       dockerfile: SportServer/Dockerfile
     depends_on:
       - mysql
+    networks:
+      - main
     environment:
       - SPORT_CONNECTION=Server=mysql;Port=3306;Database=sportapp;Uid=root;Pwd=toor;
       - ASPNETCORE_URLS=http://+:5000
       - ISSUER=SportApp
       - SECRET_KEY=qwuyteqtuwyytudgiuygioydfigoy123gyfdgydfsgygyfdsgy312guydowfsghilydfko
-      - AUDIENCE=User
+      - AUDIENCE=Administrator
 
   mysql:
     image: mysql:8
     container_name: mysql
     restart: always
-    ports:
-      - "3306:3306"
+    networks:
+      - main
     environment:
       MYSQL_ROOT_PASSWORD: toor
       MYSQL_DATABASE: sportapp
@@ -35,6 +37,8 @@ services:
     ports:
       - 80:80
       - 443:443
+    networks:
+      - main
     volumes:
       - ./Caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -44,4 +48,8 @@ volumes:
   db:
   caddy_data:
   caddy_config:
+
+networks:
+  main:
+    external: true
   
