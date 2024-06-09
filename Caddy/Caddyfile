@@ -1,0 +1,5 @@
+:80 {
+  reverse_proxy {
+    to sportserver:5000
+  }
+}
